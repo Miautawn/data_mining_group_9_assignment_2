@@ -12,10 +12,11 @@ This codebase uses the following tools:
 Please follow the links to set the tools locally.
 After you're done you can continue with the repo setup:
 ```bash
-pyenv install                   # intsalls the python version needed for the codebase
-poetry intall                   # installs the needed python dependencies
-poetry run pre-commit install   # installs the pre-commit hooks
-$( : "optionally" ) dvc pull    # pulls all the data artifacts (read `Using DVC` section)
+pyenv install                                  # installs the python version needed for the codebase
+poetry config virtualenvs.in-project true      # makes poetry create a local `.venv`
+poetry install                                  # installs the needed python dependencies
+poetry run pre-commit install                  # installs the pre-commit hooks
+$( : "optionally" ) dvc pull                   # pulls all the data artifacts (read `Using DVC` section)
 ```
 
 Whenever you wish to execute a python script from the terminal, you can do it by running it through poetry:
