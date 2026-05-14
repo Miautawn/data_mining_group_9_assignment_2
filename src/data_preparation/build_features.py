@@ -197,20 +197,11 @@ def run_pipeline(
         "X_test": str(
             save_table(downcast_numeric(test_features), output_dir / "X_test.parquet")
         ),
-        "train_features": str(
-            save_table(train_features, output_dir / "train_features.parquet")
-        ),
-        "valid_features": str(
-            save_table(valid_features, output_dir / "valid_features.parquet")
-        ),
         "full_train_features": str(
             save_table(
                 downcast_numeric(full_train_features),
                 output_dir / "full_train_features.parquet",
             )
-        ),
-        "test_features": str(
-            save_table(test_features, output_dir / "test_features.parquet")
         ),
         "train_labels": str(save_table(y_train, output_dir / "y_train.parquet")),
         "valid_labels": str(save_table(y_valid, output_dir / "y_valid.parquet")),
