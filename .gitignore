@@ -21,14 +21,21 @@ data/processed/
 # Generated figures (reproducible from code)
 figures/
 
+# Generated Task 3 smoke-test outputs; real outputs/features is tracked by DVC
+outputs/features_smoke*/
+
 # Generated PDFs (reproducible from .tex)
 report.pdf
 
 # Claude internal
 .claude/
 
+# Local agent instructions
+AGENT.md
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .ipynb_checkpoints/
+.ruff_cache/

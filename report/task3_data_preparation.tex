@@ -1,0 +1,65 @@
+\section{Data Preparation}
+\label{sec:dataprep}
+
+The data-preparation pipeline converts the Expedia hotel-search data into grouped ranking inputs for the modelling stage. The implementation is kept as a reproducible script in \texttt{src/data\_preparation/build\_features.py}. It produces feature matrices, relevance labels, group-size files, metadata, and baseline diagnostics in \texttt{outputs/features/}. The design follows the main conclusion from the EDA: hotels should be compared within the same \texttt{srch\_id}, because the final task is to rank the candidate hotels shown for one search.
+
+\subsection{Train--Validation Split}
+
+The validation split is made by unique \texttt{srch\_id}, not by individual rows. This prevents hotels from the same search result list from appearing in both training and validation. Such a row-level split would leak search context and would overstate validation performance for a ranking model. The default split uses 80\% of searches for training and 20\% for validation with a fixed random seed.
+
+The target for validation is a graded relevance label:
+\[
+\text{relevance} =
+\begin{cases}
+5, & \text{if } \texttt{booking\_bool}=1,\\
+1, & \text{if } \texttt{click\_bool}=1 \text{ and } \texttt{booking\_bool}=0,\\
+0, & \text{otherwise.}
+\end{cases}
+\]
+This is aligned with NDCG@5, where bookings are more valuable than clicks. The pipeline also saves group-size files ordered by \texttt{srch\_id}, so that LightGBM LambdaRank and other learning-to-rank implementations can reconstruct the query boundaries.
+
+\subsection{Cleaning and Leakage Prevention}
+
+The final model features exclude \texttt{click\_bool}, \texttt{booking\_bool}, \texttt{position}, \texttt{gross\_booking\_usd}, and \texttt{gross\_bookings\_usd}. The first two columns are target variables. The booking-value columns are only observed after a booking and are therefore label leakage. The \texttt{position} column is highly predictive in the training set, but it is not available for the test set and mostly reflects Expedia's previous ranking system. It is therefore excluded from the final feature list, even though it remains useful for EDA and position-bias diagnostics.
+
+The timestamp column \texttt{date\_time} is parsed into \texttt{date\_month}, \texttt{date\_dayofweek}, \texttt{date\_hour}, and \texttt{date\_is\_weekend}. The original timestamp is dropped after these numeric calendar features are created. Numeric columns are downcast before saving where possible to keep the large feature files manageable.
+
+\subsection{Missing Values}
+
+Missingness is treated as informative rather than purely as a data-quality issue. The pipeline adds missing indicators for sparse but useful fields, including \texttt{visitor\_hist\_starrating}, \texttt{visitor\_hist\_adr\_usd}, \texttt{prop\_location\_score2}, \texttt{srch\_query\_affinity\_score}, \texttt{orig\_destination\_distance}, and the \texttt{comp1}--\texttt{comp8} competitor fields. These indicators allow the model to learn patterns such as a missing visitor history or unavailable competitor prices.
+
+Imputation statistics are fitted only on the relevant training data. For offline validation, they are fitted on the training split and then applied to validation. For final test prediction, they are fitted on the full labelled training set and then applied to the test set. Visitor-history variables are imputed with medians by \texttt{visitor\_location\_country\_id} where possible, falling back to global medians. \texttt{prop\_location\_score2} is imputed by \texttt{prop\_country\_id} median where possible. \texttt{srch\_query\_affinity\_score} is imputed with a sentinel below the observed training minimum, and \texttt{orig\_destination\_distance} is imputed with a fitted median. Remaining numeric missing values are filled with training-fitted medians after the train, validation, and test feature columns are aligned.
+
+\subsection{Price and Deal Features}
+
+The EDA showed that \texttt{price\_usd} contains extreme outliers. To reduce their influence, the pipeline creates \texttt{price\_usd\_capped} by capping \texttt{price\_usd} at the 99th percentile within each \texttt{site\_id}. These caps are fitted only on the relevant training data and then reused for validation or test rows, with a global 99th percentile fallback for unseen \texttt{site\_id} values.
+
+The capped price is also converted into \texttt{price\_per\_night} using \texttt{srch\_length\_of\_stay}, with a minimum stay length of one night, and into \texttt{log\_price\_usd\_capped}. Because previous Expedia solutions found deal-like features useful, the pipeline reconstructs a historical price from \texttt{prop\_log\_historical\_price} and creates \texttt{deal\_value}, \texttt{deal\_ratio}, and \texttt{log\_historical\_price\_diff}. Zero or invalid historical prices are flagged with \texttt{prop\_historical\_price\_missing\_or\_zero}; very large historical prices and deal ratios are clipped to avoid infinite or unstable values.
+
+\subsection{Within-Search Features}
+
+Since ranking happens within a search, relative features are more meaningful than global raw values. For each \texttt{srch\_id}, the pipeline creates rank, percentile rank, difference from the search mean, difference from the search median, and z-score features for \texttt{price\_usd\_capped}, \texttt{price\_per\_night}, \texttt{prop\_starrating}, \texttt{prop\_review\_score}, \texttt{prop\_location\_score1}, \texttt{prop\_location\_score2}, \texttt{prop\_log\_historical\_price}, and \texttt{deal\_value} when the source columns are available.
+
+The pipeline also adds indicator features for the cheapest property in the search, the highest review score, the highest \texttt{prop\_location\_score2}, and the highest star rating. These features directly represent the comparison a user faces in a search result list.
+
+\subsection{Search--Property Match Features}
+
+Several features compare the user's historical preferences and search context with the displayed hotel. Examples include the absolute difference between \texttt{visitor\_hist\_starrating} and \texttt{prop\_starrating}, the absolute difference between \texttt{visitor\_hist\_adr\_usd} and capped current price, total guest count, guests per room, a family-search indicator, booking-window buckets, length-of-stay buckets, and a domestic-trip indicator based on visitor and hotel country identifiers. Simple interaction features, such as promotion multiplied by price rank and star rating multiplied by review score, are also included for tree-based models.
+
+\subsection{Competitor Features}
+
+The raw competitor columns are highly sparse and repeated across \texttt{comp1} to \texttt{comp8}. The pipeline therefore collapses them into aggregate features instead of relying on the raw blocks. These aggregates include counts of cases where Expedia is cheaper, equal, or more expensive, counts of available and unavailable competitor observations, mean, minimum, and maximum competitor percentage difference, a total missing-count feature, and a count of any available competitor data. The raw competitor blocks are dropped from the final feature matrix to reduce sparsity and dimensionality.
+
+\subsection{Historical Popularity Features}
+
+The pipeline adds leakage-safe historical popularity features from labelled training data. At the property level, these include impressions, smoothed click rate, smoothed booking rate, smoothed mean relevance, and mean capped price. At the destination and property--destination levels, the pipeline adds impression counts and smoothed booking-rate and relevance features where feasible.
+
+The smoothed estimates use
+\[
+\frac{\text{sum} + \alpha \cdot \text{global mean}}{\text{count} + \alpha}.
+\]
+The property-level smoothing parameter is \(\alpha=10\), while sparse combined keys use a larger smoothing value. For validation, historical encodings are fitted only on the training split and then applied to validation. For final test prediction, the encodings are fitted on the full labelled training set and then applied to the test set. Unseen keys fall back to the corresponding global training mean.
+
+\subsection{Output for Modelling}
+
+The pipeline saves \texttt{X\_train}, \texttt{X\_valid}, \texttt{X\_test}, \texttt{y\_train}, \texttt{y\_valid}, and group-size files for validation experiments. It also saves \texttt{full\_train\_features} and \texttt{test\_features} for final training and prediction. The feature columns are aligned across train, validation, and test, and the metadata records the final feature list, dropped leakage columns, missing-value strategy, fitted preprocessing choices, historical-encoding settings, and NDCG@5 baseline diagnostics. These outputs are intended for LightGBM LambdaRank or LambdaMART-style models, while still supporting recommender-system baselines such as property-popularity ranking.
